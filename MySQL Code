@@ -1,0 +1,222 @@
+/*
+Understand the data set:
+- 4/10/2016 SUNDAY; timezone unknown
+- total events: 5850 (2608/45% sidebar; 1931/33% push; 1311/22% banner)
+- imp 3932/67% (1546/39% sidebar; 1533/39% push; 853/22% banner)
+- clk 1918/33% (1062/55% sidebar; 398/21% push; 458/24% banner)
+- push events mostly (58%) from app id=15, all imp
+- 26% banner events from app id=4; app id=4 is 17% of sidebar events
+
+- top apps by events: 15; 4; 29; 31; 1
+- top apps by teams: 4; 15; 31; 29; 17
+- top apps by users: 15; 4; 31; 29; 17
+
+- total unique teams: 2065 (914/44% sidebar; 577/28% push; 574/28% banner)
+- clk: 1171 teams, 1917 users
+- imp: 656 teams, 2817 users
+- total unique users: 4611 (1994/43% sidebar: 1513/33% push; 1104/24% banner)
+*/
+
+/*
+Data issue: There are four apps (id=10,11,17,31) having more clicks than impressions. 
+
+-- Potential causes and ways to verify:
+  - Tracking issue: Some impressions are not properly tracked. [Check the tracking setup for the alerts that have clicks but no impressions]
+  - Data refresh/upload issue: Some impressions data are not refreshed or uploaded into this data set as this data set contains user behaviors on a Sunday. [Refresh and ensure data is complete]
+  - One-day data set: This data set only contains data logged on 4/10/2016, therefore events happened right before or after 12AM are not included. One alert can be seen the day before, and be clicked on during this day. [Look at a longer timeframe]
+  - Different time zones: The time zone used for extracting this data set can be different from the time zone where the users were. some events happened in 1 day could be broken out into 2 days. [Analyze the data based on users’ local timezone]
+
+-- Solution for conducting the analysis below:
+  - Exclude data from these four apps
+*/
+
+
+
+/*** Questions #1 What is the best performing alert type? ***/
+
+/*
+I define the “best performing” alert type as the one that the users engage with (i.e. clicked on) the most. 
+
+By this definition, Sidebar Alert is the best performing alert type for this given day based on the following analysis results.
+
+-- Users are more likely to click on sidebar alerts. 
+  - Sidebar Alert has the highest click-through rate (61%; from impression to click) among the three alert types even with the highest number of impressions and clicks. 
+
+-- Sidebar alert engages with more teams and users.
+  - The number of teams and users clicked on sidebar alerts (790 or 38% of total teams; 1808 or 39% of total users) are the highest.
+*/
+
+
+select
+  alert_type,
+  sum(case when event = 'imp' then 1 else 0 end) as imp,
+  sum(case when event = 'clk' then 1 else 0 end) as clk,
+  sum(case when event = 'clk' then 1 else 0 end)
+  /sum(case when event = 'imp' then 1 else 0 end) as CTR,
+  count(distinct team_id) as team,
+  count(distinct user_id) as user,
+  sum(case when event = 'imp' then 1 else 0 end)/count(distinct team_id) as imp_per_team,
+  sum(case when event = 'imp' then 1 else 0 end)/count(distinct user_id) as imp_per_user,
+  sum(case when event = 'clk' then 1 else 0 end)/count(distinct team_id) as clk_per_team,
+  sum(case when event = 'clk' then 1 else 0 end)/count(distinct user_id) as clk_per_user
+from alerts
+where 
+  app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+group by 
+  alert_type
+order by
+  alert_type desc
+;
+
+select
+  alert_type,
+  event,
+  count(eventtime) as events,
+  count(distinct team_id) as team,
+  count(distinct user_id) as user,
+  count(distinct user_id)/count(distinct team_id) as user_per_team,
+  count(eventtime)/count(distinct team_id) as per_team,
+  count(eventtime)/count(distinct user_id) as per_user
+from alerts
+where 
+  app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+group by
+  alert_type,
+  event
+order by 
+  event,
+  alert_type desc
+;
+
+
+
+
+/*** Questions #2 What apps are the best and worst performing? ***/
+
+/*
+I define the “best performing” app as the app that contributed the most to overall engagement (measured by click-through rate), and the “worst performing” app as the app that contributed the least to overall engagement. 
+
+By these definitions, app #4 is the best performing one, and the app with id #15 as the worst performing one.
+
+Specific analysis results are as follows:
+-- App #4 contributed 11% to overall CTR, and it’s the mostly used app among teams (415 or 34% of total teams), and the second mostly used app among users (801 or 24% total users).
+-- App #15 is used by a large number of users (35% of total users) with the highest impressions but 0 click. Therefore, it is the worst performing app in terms of contribution to overall engagement. However, it can be a well-performing app if its purpose or goal is simply to reach or inform people, rather than engage.
+*/
+
+
+
+select *
+from
+(
+    select
+      app_id,
+      sum(case when event = 'imp' then 1 else 0 end) as imp,
+      sum(case when event = 'clk' then 1 else 0 end) as clk,
+      sum(case when event = 'clk' then 1 else 0 end)
+      /sum(case when event = 'imp' then 1 else 0 end) as CTR,
+      sum(case when event = 'clk' then 1 else 0 end)
+      /(
+          select
+            sum(case when event = 'imp' then 1 else 0 end)
+          from alerts
+          where 
+            app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+        ) as Weighted_CTR,
+      count(distinct team_id) as team,
+      count(distinct team_id)
+      /(
+          select
+            count(distinct team_id)
+          from alerts
+          where 
+            app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+        ) as of_Total_Team,
+      count(distinct user_id) as user,
+      count(distinct user_id)
+      /(
+          select
+            count(distinct user_id)
+          from alerts
+          where 
+            app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+        ) as of_Total_User
+    from alerts
+    where 
+      app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+    group by 
+      app_id
+    order by
+      app_id
+) as T
+order by Weighted_CTR desc
+;
+
+
+
+/*** Questions #3 I’m curious about what the first alert a team clicked on in this day? For each alert_type, compute how many teams clicked an alert of that type as their first alert in a day.***/
+
+/*
+Sidebar Alert is the alert type that most teams clicked on as their first alert in this day. 
+-- Sidebar alert: 539 or 56%
+-- Banner alert: 223 or 23%
+-- Push alert: 192 or 20%
+*/
+
+select
+  T2.alert_type,
+  count(distinct T2.team_id) Teams_First_Clicked
+from
+(
+    select
+      a1.team_id,
+      a1.alert_type
+    from alerts a1 join
+      (
+        select
+          team_id,
+          min(eventtime) as first_time
+        from alerts
+        where 
+          event='clk'
+          and app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+        group by team_id
+      ) as T
+      on a1.team_id = T.team_id
+    where
+      a1.eventtime=T.first_time
+      and app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+)T2
+group by
+  T2.alert_type
+order by
+  count(distinct T2.team_id) desc
+;
+
+
+/* Questions #4 Create a mock dashboard with 2 visualizations using the data from above to demonstrate the health of the product for that day, as you interpret it.*/
+
+/*
+Please refre to the Tableau workbook for the visualizations.
+*/
+
+
+
+select
+  alert_type,
+  app_id,
+  sum(case when event = 'imp' then 1 else 0 end) as imp,
+  sum(case when event = 'clk' then 1 else 0 end) as clk,
+  count(distinct user_id) as users,
+  count(distinct team_id) as teams
+from alerts
+where app_id<>10 and app_id<>11 and app_id<>17 and app_id<>31
+group by 
+  alert_type,
+  app_id
+;
+
+
+
+
+
+
